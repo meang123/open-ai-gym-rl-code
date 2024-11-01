@@ -8,7 +8,7 @@ def get_default_config():
             "seed": 0,
             "num_sequences": 10,
             "gamma_c": 0.995,
-            "buffer_size": 2*10**5,
+            "buffer_size": int(1e6),
             "feature_dim": 200,
             "z2_dim": 200,
             "hidden_units": (256, 256),

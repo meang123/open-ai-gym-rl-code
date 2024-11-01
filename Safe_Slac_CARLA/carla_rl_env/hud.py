@@ -111,7 +111,7 @@ class Util(object):
         :param actor:
         :return: bounding box corners of an actor in world space
         """
-        bb = actor.trigger_volume.extend
+        bb = actor.trigger_volume.extent
         corners = [carla.Location(x=-bb.x,y=-bb.y),
                    carla.Location(x=bb.x, y=-bb.y),
                    carla.Location(x=bb.x, y=bb.y),

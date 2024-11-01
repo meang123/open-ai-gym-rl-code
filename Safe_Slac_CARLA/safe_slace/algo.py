@@ -278,6 +278,21 @@ class LatentPolicySafetyCriticSlac:
         soft_update(self.critic_target, self.critic, self.tau)
         soft_update(self.safety_critic_target, self.safety_critic, self.tau)
 
+    def prepare_batch(self, state_, ometer_, action_):
+        with torch.no_grad():
+
+            feature_ = self.latent.encoder(state_, ometer_)
+
+            z_ = torch.cat(self.latent.sample_posterior(feature_, action_)[2:4], dim=-1)
+
+
+        z, next_z = z_[:, -2], z_[:, -1]
+
+        action = action_[:, -1]
+
+        feature_action, next_feature_action = self.create_feature_actions(feature_, action_)
+        return z, next_z, action, feature_action, next_feature_action
+
     def update_critic(self, z, next_z, action, next_feature_action, reward, done, writer):
         curr_q1, curr_q2 = self.critic(z, action)
         with torch.no_grad():
