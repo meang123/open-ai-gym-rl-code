@@ -2,6 +2,8 @@
 <project version="4">
   <component name="VcsDirectoryMappings">
     <mapping directory="$PROJECT_DIR$" vcs="Git" />
+    <mapping directory="$PROJECT_DIR$/Distributed_RL" vcs="Git" />
     <mapping directory="$PROJECT_DIR$/capstone_RL_version1" vcs="Git" />
+    <mapping directory="$PROJECT_DIR$/fixed_route" vcs="Git" />
   </component>
 </project>
