@@ -38,7 +38,7 @@ class PER_Buffer:
 
         if self.is_full():
             # 가장 작은 값과 바꾼다
-            if priority > self.buffer["priority"].min():
+            if priority >= self.buffer["priority"].min():
                 idx = self.buffer["priority"].argmin()
                 self.buffer[idx] = (priority, experience)
 

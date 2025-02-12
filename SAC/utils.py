@@ -13,7 +13,7 @@ so Need adjust parameter scheduler
 
 import gym
 import numpy as np
-
+import time
 import collections
 
 _field_names = [
@@ -27,7 +27,10 @@ Experience = collections.namedtuple("Experience", field_names=_field_names)
 
 def eval_policy(policy, env_name,render=False,eval_episodes=10):
 
-    eval_env = gym.make(env_name)
+    if render:
+        eval_env = gym.make(env_name, render_mode="human")
+    else:
+        eval_env = gym.make(env_name)
     #eval_env.seed(seed + 100)
 
     avg_reward = 0.
@@ -39,6 +42,7 @@ def eval_policy(policy, env_name,render=False,eval_episodes=10):
         while True:
             if(render):
                 eval_env.render()
+                time.sleep(0.01)
 
             action = policy.select_action(state,eval_env)
             state, reward, done, i , _= eval_env.step(action)
@@ -64,7 +68,7 @@ alpha min 0.3
 """
 class adaptiveSchedule(object):
     def __init__(self,alpha_max,alpha_min):
-        self.C = 0.5
+        self.C = 5
         self.alpha_max = alpha_max
         self.alpha_min = alpha_min
 

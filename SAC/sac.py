@@ -8,7 +8,7 @@ import numpy as np
 import torch.optim as optim
 
 from torch.distributions import Normal
-
+from torch.optim.lr_scheduler import MultiStepLR
 
 
 
@@ -108,7 +108,7 @@ class SAC(object):
         self.action_dim = opt.action_dim
         self.device = device
 
-        self.summary_writer = opt.summary_writer
+
         self.writer = opt.write
 
         self.tau = opt.tau
@@ -118,9 +118,11 @@ class SAC(object):
         self.batch_size = opt.batch_size
         self.total_it = 0
         self.policy_freq = opt.policy_freq
+        self.grad_clip_norm = 5.0
+        self.start_alpha=4e-3
 
         # automatic entropy coefficient alpha -> but high variance
-        self.target_entropy = -torch.Tensor(self.action_dim).to(self.device)
+        self.target_entropy = -float(self.action_dim) #-torch.Tensor(self.action_dim).to(self.device)
 
         self.log_alpha = torch.zeros(1, requires_grad=True,device=self.device)
         self.autotune_alpha = self.log_alpha.exp().item()
@@ -138,6 +140,17 @@ class SAC(object):
         self.critic2 = Critic(opt).to(self.device)
         self.critic_target2 = copy.deepcopy(self.critic2).eval()
         self.critic_optimizer2 = optim.AdamW(self.critic2.parameters(), lr=self.critic_lr)
+
+        self.sched_actor = MultiStepLR(self.actor_optimizer, milestones=[400], gamma=0.5)
+        self.sched_critic = MultiStepLR(self.critic_optimizer, milestones=[400], gamma=0.5)
+        self.sched_critic2 = MultiStepLR(self.critic_optimizer2, milestones=[400], gamma=0.5)
+
+        self.sched_alpha = MultiStepLR(self.autotune_alpha_optimizer, milestones=[400], gamma=0.5)
+
+        self.scheds = [self.sched_actor, self.sched_critic, self.sched_critic2, self.sched_alpha]
+
+
+
 
 
     def select_action(self,state,env,random_sample=False):
@@ -200,10 +213,10 @@ class SAC(object):
             next_action,next_log_pi,_ = self.actor.get_action(next_states)
 
             Q_target1 = self.critic_target(next_states,next_action)
-            Q_target2 = self.critic_target2(next_states, next_action)
+            Q_target2 = self.critic_target2(next_states,next_action)
 
             # maxmize object function
-            target_Q = torch.min(Q_target1, Q_target2) - self.autotune_alpha * next_log_pi
+            target_Q = torch.min(Q_target1,Q_target2) - self.autotune_alpha * next_log_pi
 
             # Q_targets = r + γ * (min_critic_target(next_state, actor_target(next_state)) - α *log_pi(next_action|next_state))
             target_Q = rewards.flatten()+((1-dones.flatten())*self.gamma * target_Q.view(-1))
@@ -215,26 +228,29 @@ class SAC(object):
         TD_error2 = target_Q - cur_Q2
         # priority 선택시 overestimate 최소 위해 최소값을 선택하였는데 평균값으로 실험해봐도 괜찮을것 같다
 
-        TD_Error = torch.min(TD_error1, TD_error2)
-        priority = (TD_Error.abs().cpu().detach().numpy().flatten())
+        #TD_Error = torch.min(TD_error1, TD_error2)
+        priority = abs(((TD_error1 + TD_error2)/2.0 + 1e-5).squeeze()).detach().cpu().numpy().flatten()
         PER_buffer.update_priorities(idxs, priority + 1e-6)  # priority must positiv
 
         _sampling_weights = (torch.Tensor(sampling_weights).view((-1, 1))).to(self.device)
 
         # MSE loss with importance sampling
-        critic_loss1 = torch.mean(torch.square(_sampling_weights * TD_error1))
-        critic_loss2 = torch.mean(torch.square(_sampling_weights * TD_error2))
+        critic_loss = 0.5 * (TD_error1.pow(2) * _sampling_weights).mean()
+        critic_loss2 = 0.5 * (TD_error2.pow(2) * _sampling_weights).mean()
 
         # Optimize the critic
         self.critic_optimizer.zero_grad()
-        critic_loss1.backward()
+        critic_loss.backward()
+        torch.nn.utils.clip_grad_norm_(self.critic.parameters(), self.grad_clip_norm)
         self.critic_optimizer.step()
 
         self.critic_optimizer2.zero_grad()
         critic_loss2.backward()
+        torch.nn.utils.clip_grad_norm_(self.critic2.parameters(), self.grad_clip_norm)
         self.critic_optimizer2.step()
 
-        if self.total_it % self.policy_freq == 0:
+
+        if (self.total_it + 1)% self.policy_freq == 0:
             for _ in range(self.policy_freq):
                 action_pi,log_pi,_ = self.actor.get_action(states)
                 q1 = self.critic(states,action_pi)
@@ -248,14 +264,13 @@ class SAC(object):
                 actor_loss.backward()
                 self.actor_optimizer.step()
 
-                # autoutune alpha
-                with torch.no_grad():
-                    _,log_pi,_ = self.actor.get_action(states)
 
-                autotune_alpha_loss = (-self.log_alpha.exp() * (log_pi + self.target_entropy)).mean()
+                autotune_alpha_loss = (-self.log_alpha.exp() * (log_pi.detach() + self.target_entropy)).mean()
 
                 self.autotune_alpha_optimizer.zero_grad()
                 autotune_alpha_loss.backward()
+                #torch.nn.utils.clip_grad_norm_(autotune_alpha_loss, self.grad_clip_norm)
+
                 self.autotune_alpha_optimizer.step()
                 self.autotune_alpha = self.log_alpha.exp().item()
 
@@ -263,8 +278,7 @@ class SAC(object):
             self.soft_update(self.critic2, self.critic_target2, self.tau)
 
             self.total_it += 1
-            if self.writer != None:
-                return critic_loss1,critic_loss2,actor_loss,self.autotune_alpha,autotune_alpha_loss.item()
+
 
 
 
@@ -289,4 +303,4 @@ class SAC(object):
         self.critic_target = copy.deepcopy(self.critic)
 
         self.critic2.load_state_dict(torch.load(f"{filename}+_critic_2"))
-        self.critic_target = copy.deepcopy(self.critic2)
+        self.critic_target2 = copy.deepcopy(self.critic2)
