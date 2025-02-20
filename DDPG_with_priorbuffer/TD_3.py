@@ -5,6 +5,7 @@ import torch.nn as nn
 import torch.optim as optim
 import torch.nn.functional as F
 from priority_replay_buffer import *
+from torch.optim.lr_scheduler import MultiStepLR
 """
 
 
@@ -98,7 +99,7 @@ class TD_3(object):
         # Action scale에 맞추기 위해 max_action 곱하여서 scale맞춤
         self.policy_noise = opt.policy_noise * self.max_action
         self.noise_clip = opt.noise_clip * self.max_action
-
+        self.grad_clip_norm = 5.0
 
         self.policy_freq = opt.policy_freq
         self.batch_size = opt.batch_size
@@ -119,6 +120,15 @@ class TD_3(object):
         self.critic_target2 = copy.deepcopy(self.critic2).eval()
         self.critic_optimizer2 = optim.AdamW(self.critic2.parameters(),lr=self.critic_lr)
 
+        self.sched_actor = MultiStepLR(self.actor_optimizer, milestones=[400], gamma=0.5)
+        self.sched_critic = MultiStepLR(self.critic_optimizer1, milestones=[400], gamma=0.5)
+        self.sched_critic2 = MultiStepLR(self.critic_optimizer2, milestones=[400], gamma=0.5)
+
+
+
+        self.scheds = [self.sched_actor, self.sched_critic, self.sched_critic2]
+
+
 
         self.total_it = 0
 
@@ -133,9 +143,9 @@ class TD_3(object):
 
         return len(buffer) >= buffer.batch_size
 
-    def train(self,beta,PER_buffer):
+    def train(self,beta,alpha,PER_buffer):
 
-        idxs, experiences, sampling_weights = PER_buffer.sample(beta)
+        idxs, experiences, sampling_weights = PER_buffer.sample(beta,alpha)
 
 
         states = np.array([e.state for e in experiences])
@@ -170,29 +180,29 @@ class TD_3(object):
 
         # priority 선택시 overestimate 최소 위해 최소값을 선택하였는데 평균값으로 실험해봐도 괜찮을것 같다
 
-        TD_Error = torch.min(TD_error1,TD_error2)
-
-        priority = (TD_Error.abs().cpu().detach().numpy().flatten())
-
-        PER_buffer.update_priorities(idxs, priority + 1e-6)  # priority must positive value
+        #TD_Error = torch.min(TD_error1, TD_error2)
+        priority = abs(((TD_error1 + TD_error2)/2.0 + 1e-5).squeeze()).detach().cpu().numpy().flatten()
+        PER_buffer.update_priorities(idxs, priority + 1e-6)  # priority must positiv
 
         _sampling_weights = (torch.Tensor(sampling_weights).view((-1, 1))).to(self.device)
 
         # MSE loss with importance sampling
-        critic_loss1 = torch.mean(torch.square(_sampling_weights * TD_error1))
-        critic_loss2 = torch.mean(torch.square(_sampling_weights * TD_error2))
+        critic_loss = 0.5 * (TD_error1.pow(2) * _sampling_weights).mean()
+        critic_loss2 = 0.5 * (TD_error2.pow(2) * _sampling_weights).mean()
 
         # Optimize the critic
         self.critic_optimizer1.zero_grad()
-        critic_loss1.backward()
+        critic_loss.backward()
+        torch.nn.utils.clip_grad_norm_(self.critic1.parameters(), self.grad_clip_norm)
         self.critic_optimizer1.step()
 
         self.critic_optimizer2.zero_grad()
         critic_loss2.backward()
+        torch.nn.utils.clip_grad_norm_(self.critic2.parameters(), self.grad_clip_norm)
         self.critic_optimizer2.step()
 
-
-        if self.total_it % self.policy_freq == 0:
+        self.total_it += 1
+        if (self.total_it + 1) % self.policy_freq == 0:
             actor_loss = -torch.mean(_sampling_weights*self.critic1(states, self.actor(states)))
 
             # Optimize the actor
@@ -204,12 +214,8 @@ class TD_3(object):
             self.soft_update(self.critic2, self.critic_target2, self.tau)
             self.soft_update(self.actor, self.actor_target, self.tau)
 
-            if self.writer != None:
-                self.summary_writer.add_scalar('critic_loss1', critic_loss1)
-                self.summary_writer.add_scalar('critic_loss2', critic_loss2)
-                self.summary_writer.add_scalar('actor_loss', actor_loss)
 
-        self.total_it += 1
+
 
 
 
@@ -234,4 +240,4 @@ class TD_3(object):
         self.critic_target = copy.deepcopy(self.critic1)
 
         self.critic2.load_state_dict(torch.load(f"{filename}+_critic_2"))
-        self.critic_target = copy.deepcopy(self.critic2)
+        self.critic_target2 = copy.deepcopy(self.critic2)

@@ -250,6 +250,7 @@ class SAC(object):
         self.critic_optimizer2.step()
 
 
+        self.total_it += 1
         if (self.total_it + 1)% self.policy_freq == 0:
             for _ in range(self.policy_freq):
                 action_pi,log_pi,_ = self.actor.get_action(states)
@@ -269,7 +270,7 @@ class SAC(object):
 
                 self.autotune_alpha_optimizer.zero_grad()
                 autotune_alpha_loss.backward()
-                #torch.nn.utils.clip_grad_norm_(autotune_alpha_loss, self.grad_clip_norm)
+                torch.nn.utils.clip_grad_norm_(autotune_alpha_loss, self.grad_clip_norm)
 
                 self.autotune_alpha_optimizer.step()
                 self.autotune_alpha = self.log_alpha.exp().item()
@@ -277,7 +278,7 @@ class SAC(object):
             self.soft_update(self.critic, self.critic_target, self.tau)
             self.soft_update(self.critic2, self.critic_target2, self.tau)
 
-            self.total_it += 1
+
 
 
 

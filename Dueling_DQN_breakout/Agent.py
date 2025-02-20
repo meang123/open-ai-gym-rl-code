@@ -4,6 +4,7 @@ from torch import nn
 import copy
 import torch.optim as optim
 from PER import *
+from torch.optim.lr_scheduler import MultiStepLR
 
 # dueling dqn network
 class Dueling_DQN(nn.Module):
@@ -86,11 +87,18 @@ class Agent(object):
         self.esip_init = opt.epsilon_init
         self.action_dim = opt.action_dim
         self.state_dim = opt.state_dim
-
+        self.grad_clip_norm = 5.0
 
         self.optimizer = optim.Adam(model.parameters(),lr = opt.lr_init)
 
-        self.PER_buffer = PER_Buffer(opt)
+
+
+
+
+        self.sched_critic = MultiStepLR(self.optimizer, milestones=[400], gamma=0.5)
+
+        self.scheds = [self.sched_critic]
+
 
     def select_action(self,state,epsilon,deterministic=False):
 
@@ -143,9 +151,9 @@ class Agent(object):
 
 
     # loop train part in main file
-    def train(self,beta):
+    def train(self,beta,alpha,buffer):
 
-        idxs,experiences,sampling_weights = self.PER_buffer.sample(beta)
+        idxs,experiences,sampling_weights = buffer.sample(beta,alpha)
         # Experience nametuple을 각각 앞에서부터 가져오는 연산 위해 zip(*experience)사용
 
         #states, actions, rewards, next_states, dones = (torch.Tensor(vs).to(self.device) for vs in zip(*experiences))
@@ -189,16 +197,17 @@ class Agent(object):
         TD_Error = target_Q-current_Q
 
         priority = (TD_Error.abs().cpu().detach().numpy().flatten())
-        self.PER_buffer.update_priorities(idxs,priority + 1e-6) # priority must positive value
+        buffer.update_priorities(idxs,priority + 1e-6) # priority must positive value
 
         # compute MSE loss
 
         _sampling_weights = (torch.Tensor(sampling_weights).view((-1, 1))).to(self.device)
 
-        loss = torch.mean(torch.square(_sampling_weights *TD_Error))
+        loss = 0.5 * (TD_Error.pow(2) * _sampling_weights).mean()
 
         self.optimizer.zero_grad()
         loss.backward()
+        torch.nn.utils.clip_grad_norm_(self.critic.parameters(), self.grad_clip_norm)
         self.optimizer.step()
 
 

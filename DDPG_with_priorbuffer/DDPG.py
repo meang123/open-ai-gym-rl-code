@@ -5,7 +5,7 @@ import torch.nn as nn
 import torch.optim as optim
 import torch.nn.functional as F
 from priority_replay_buffer import *
-
+from torch.optim.lr_scheduler import MultiStepLR
 """
 
 
@@ -100,6 +100,7 @@ class DDPG(object):
         self.actor_lr = opt.lr_init
         self.critic_lr = opt.lr_init
         self.summary_writer = opt.summary_writer
+        self.grad_clip_norm = 5.0
 
         # Define actor target, behavior net
         self.actor = Actor(self.state_dim, self.action_dim, self.max_action).to(self.device)
@@ -112,12 +113,18 @@ class DDPG(object):
         self.critic_target = copy.deepcopy(self.critic).eval()
         self.critic_optimizer = optim.AdamW(self.critic.parameters(), lr=self.critic_lr)
 
+
+        self.sched_actor = MultiStepLR(self.actor_optimizer, milestones=[400], gamma=0.5)
+        self.sched_critic = MultiStepLR(self.critic_optimizer, milestones=[400], gamma=0.5)
+
+
+
+        self.scheds = [self.sched_actor, self.sched_critic]
+
+
     def select_action(self, state):
         state = torch.Tensor(state.reshape(1, -1)).to(self.device)
-        action = (self.actor(state).cpu().data.numpy().flatten() + np.random.normal(0,
-                                                                                    self.max_action * self.expl_noise,
-                                                                                    size=self.action_dim)).clip(
-            -self.max_action, self.max_action)  # clip : 하한 상한
+        action = (self.actor(state).cpu().data.numpy().flatten() + np.random.normal(0,self.max_action * self.expl_noise,size=self.action_dim)).clip(-self.max_action, self.max_action)  # clip : 하한 상한
         return action
 
     def has_enough_experience(self, buffer) -> bool:
@@ -125,8 +132,8 @@ class DDPG(object):
 
         return len(buffer) >= buffer.batch_size
 
-    def train(self, beta, PER_buffer):
-        idxs, experiences, sampling_weights = PER_buffer.sample(beta)
+    def train(self, beta, alpha,PER_buffer):
+        idxs, experiences, sampling_weights = PER_buffer.sample(beta,alpha)
 
         states = np.array([e.state for e in experiences])
         actions = np.array([e.action for e in experiences])
@@ -147,22 +154,27 @@ class DDPG(object):
 
             target_Q = rewards + ((1 - dones) * self.discount_factor * target_Q).detach()
 
-        current_Q = self.critic(states, actions)
+        current_Q1 = self.critic(states, actions)
 
-        TD_Error = target_Q - current_Q
-        priority = (TD_Error.abs().cpu().detach().numpy().flatten())
 
-        PER_buffer.update_priorities(idxs, priority + 1e-6)  # priority must positive value
+        TD_error = target_Q - current_Q1
+
+
+        priority = abs(((TD_error)/2.0 + 1e-5).squeeze()).detach().cpu().numpy().flatten()
+        PER_buffer.update_priorities(idxs, priority + 1e-6)  # priority must positiv
 
         _sampling_weights = (torch.Tensor(sampling_weights).view((-1, 1))).to(self.device)
 
         # MSE loss with importance sampling
-        critic_loss = torch.mean(torch.square(_sampling_weights * TD_Error))
+        critic_loss = 0.5 * (TD_error.pow(2) * _sampling_weights).mean()
 
         # Optimize the critic
         self.critic_optimizer.zero_grad()
         critic_loss.backward()
+        torch.nn.utils.clip_grad_norm_(self.critic.parameters(), self.grad_clip_norm)
         self.critic_optimizer.step()
+
+
 
         # compute actor loss
         # 기본이 GD라서 -를 해야 GA가 되므로 -를 곱한다
@@ -176,9 +188,7 @@ class DDPG(object):
         self.soft_update(self.critic, self.critic_target, self.tau)
         self.soft_update(self.actor, self.actor_target, self.tau)
 
-        if self.writer != None:
-            self.summary_writer.add_scalar('critic_loss', critic_loss)
-            self.summary_writer.add_scalar('actor_loss', actor_loss)
+
 
     def soft_update(self, network, target_network, rate):
         for network_params, target_network_params in zip(network.parameters(), target_network.parameters()):
@@ -197,3 +207,6 @@ class DDPG(object):
 
         self.critic.load_state_dict(torch.load(f"{filename}+_critic"))
         self.critic_target = copy.deepcopy(self.critic)
+
+
+

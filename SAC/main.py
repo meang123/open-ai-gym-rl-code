@@ -17,7 +17,7 @@ print()
 
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument('--render', type=bool, default=False,help='Render or Not , render human mode for test, rendoer rgb array for train')
+    parser.add_argument('--render', type=bool, default=True,help='Render or Not , render human mode for test, rendoer rgb array for train')
     parser.add_argument("--policy", default="SAC")  # Policy name (TD3, DDPG or OurDDPG)
     parser.add_argument("--env", default="HalfCheetah-v4")  # OpenAI gym environment name
     parser.add_argument("--seed", default=0, type=int)  # Sets Gym, PyTorch and Numpy seeds
@@ -27,9 +27,9 @@ def main():
     parser.add_argument("--expl_noise", default=0.1, type=float)  # Std of Gaussian exploration noise
     parser.add_argument("--batch_size", default=256, type=int)  # Batch size for both actor and critic
     parser.add_argument("--discount", default=0.99, type=float)  # Discount factor
-    parser.add_argument("--tau", default=1e-2, type=float)  # Target network update rate
+    parser.add_argument("--tau", default=0.005, type=float)  # Target network update rate
 
-    parser.add_argument("--alpha_min", default=0.3, type=float)  # PER buffer alpha
+    parser.add_argument("--alpha_min", default=0.0, type=float)  # PER buffer alpha
     parser.add_argument("--alpha_max", default=0.9, type=float)  # PER buffer alpha
 
     parser.add_argument("--policy_freq", default=2, type=int)  # Frequency of delayed policy updates
@@ -43,12 +43,12 @@ def main():
 
     parser.add_argument('--beta_init', type=float, default=0.4, help='beta for PER')
     parser.add_argument('--beta_gain_steps', type=int, default=int(1e6), help='steps of beta from beta_init to 1.0')
-    parser.add_argument('--lr_init', type=float, default=2e-4, help='Initial Learning rate')
+    parser.add_argument('--lr_init', type=float, default=3e-4, help='Initial Learning rate')
     parser.add_argument('--lr_end', type=float, default=6e-5, help='Final Learning rate')
     parser.add_argument('--lr_decay_steps', type=float, default=int(1e6), help='Learning rate decay steps')
     parser.add_argument('--write', type=bool, default=True, help='summary T/F')
     parser.add_argument('--save_interval', type=int, default=int(10e4), help='Model saving interval, in steps.')
-    parser.add_argument('--Loadmodel', type=bool, default=False,help='Load pretrained model or Not')  # 훈련 마치고 나서는 True로 설정 하기
+    parser.add_argument('--Loadmodel', type=bool, default=True,help='Load pretrained model or Not')  # 훈련 마치고 나서는 True로 설정 하기
     parser.add_argument('--buffer_size', type=int, default=int(1e6), help='size of the replay buffer')
 
     args = parser.parse_args()
@@ -91,12 +91,12 @@ def main():
     buffer = PER_Buffer(args,device=device)
 
     BETA = args.beta_init
-    ALPHA = 0.6
+    ALPHA = args.alpha_min
 
 
 
     beta_scheduler = LinearSchedule(args.beta_gain_steps,args.beta_init,1.0) # beta end is 1.0 : scheduler must go to 1.0
-    alpha_scheduler = adaptiveSchedule(args.alpha_max,args.alpha_min)
+    alpha_scheduler = time_base_schedule(args.alpha_max,args.alpha_min,args.max_timesteps)
     actor_lr_scheduler = LinearSchedule(args.lr_decay_steps, args.lr_init, args.lr_end)
     critic_lr_scheduler = LinearSchedule(args.lr_decay_steps, args.lr_init, args.lr_end)
 
@@ -141,7 +141,7 @@ def main():
 
 
                 if done or truncated:
-                    print(f"Done {done}")
+
                     break
 
 
@@ -153,9 +153,9 @@ def main():
                     policy.train(BETA,ALPHA,buffer)
 
                     BETA = beta_scheduler.value(total_steps)
-                    #td_mean = np.mean(buffer.buffer[:len(buffer)]["priority"])
-                    #td_std = np.std(buffer.buffer[:len(buffer)]["priority"])
-                    #ALPHA = alpha_scheduler.value(td_mean, td_std)
+                    # td_mean = np.mean(buffer.buffer[:len(buffer)]["priority"])
+                    # td_std = np.std(buffer.buffer[:len(buffer)]["priority"])
+                    ALPHA = alpha_scheduler.value(total_steps)
 
 
 
@@ -169,6 +169,7 @@ def main():
                     #     p['lr'] = critic_lr_scheduler.value(total_steps)
                     #
                     if total_steps % 1000 == 0:
+                        print('scheduler step')
                         for sched in policy.scheds:
                             sched.step()
 
@@ -185,7 +186,7 @@ def main():
                     if args.write:
                         args.summary_writer.add_scalar('episode_reward', episode_reward, global_step=total_steps+1)
                         args.summary_writer.add_scalar('beta', BETA, global_step=total_steps+1)
-                        # args.summary_writer.add_scalar('PER_alpha', ALPHA, global_step=total_steps+1)
+                        args.summary_writer.add_scalar('PER_alpha', ALPHA, global_step=total_steps+1)
                         args.summary_writer.add_scalar('evaled_score', score, global_step=total_steps+1)
                     policy.save(f"./models/{file_name}")
                     print('writer add scalar and save model   ','steps: {}k'.format(int(total_steps / 1000)), 'score:', int(score))
