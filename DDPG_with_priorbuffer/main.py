@@ -28,7 +28,7 @@ def main():
     parser.add_argument('--render', type=bool, default=False,help='Render or Not , render human mode for test, rendoer rgb array for train')
     parser.add_argument("--policy", default="TD3")  # Policy name (TD3, DDPG or OurDDPG)
     parser.add_argument("--env", default='HalfCheetah-v4')  # OpenAI gym environment name
-    parser.add_argument("--seed", default=44, type=int)  # Sets Gym, PyTorch and Numpy seeds
+    parser.add_argument("--seed", default=0, type=int)  # Sets Gym, PyTorch and Numpy seeds
 
     parser.add_argument("--start_timesteps", default=500, type=int)  # Time steps initial random policy is used 25e3
     parser.add_argument("--eval_freq", default=5e4, type=int)  # How often (time steps) we evaluate

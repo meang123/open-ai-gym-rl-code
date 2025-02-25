@@ -13,7 +13,7 @@ so Need adjust parameter scheduler
 
 import gym
 import numpy as np
-
+import time
 import collections
 
 _field_names = [
@@ -44,7 +44,7 @@ def eval_policy(policy, env_name,render=False,eval_episodes=10):
                 eval_env.render()
                 time.sleep(0.01)
 
-            action = policy.select_action(state,eval_env)
+            action = policy.select_action(state)
             state, reward, done, i , _= eval_env.step(action)
             avg_reward += reward
             if done or i:

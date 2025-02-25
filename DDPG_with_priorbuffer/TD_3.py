@@ -103,7 +103,7 @@ class TD_3(object):
 
         self.policy_freq = opt.policy_freq
         self.batch_size = opt.batch_size
-        self.alpha = opt.alpha
+
         self.writer = opt.write
         self.actor_lr = opt.lr_init
         self.critic_lr = opt.lr_init

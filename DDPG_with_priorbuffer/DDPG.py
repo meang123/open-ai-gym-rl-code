@@ -93,7 +93,6 @@ class DDPG(object):
         self.max_action = opt.max_action
         self.discount_factor = opt.gamma
         self.tau = opt.tau
-        self.alpha = opt.alpha
         self.expl_noise = opt.expl_noise
         self.batch_size = opt.batch_size
         self.writer = opt.write
